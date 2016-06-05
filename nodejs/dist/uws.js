@@ -9,8 +9,8 @@ const uws = (() => {
     try {
         return require(`./uws_${process.platform}_${process.versions.modules}`);
     } catch (e) {
-        throw new Error('Error: Compilation of µWebSockets has failed and there is no pre-compiled binary ' +
-        'available for your system. Please install a supported C++ compiler and reinstall the module \'uws\'.');
+        throw new Error('Compilation of µWebSockets has failed and there is no pre-compiled binary ' +
+        'available for your system. Please install a supported C++11 compiler and reinstall the module \'uws\'.');
     }
 })();
 
@@ -165,9 +165,11 @@ class Socket {
      * @public
      */
     get _socket() {
+        const address = this.nativeServer.getAddress(this.nativeSocket);
         return {
-            remoteAddress: this.nativeServer.getAddress(this.nativeSocket),
-            remotePort: this.nativeServer.getPort(this.nativeSocket)
+            remotePort: address[0],
+            remoteAddress: address[1],
+            remoteFamily: address[2]
         };
     }
 
@@ -213,11 +215,13 @@ class Server extends EventEmitter {
             }
         }
 
-        this.nativeServer = new uws.Server(0, nativeOptions);
+        this.nativeServer = new uws.Server(0, nativeOptions, options.maxPayload);
 
         // can these be made private?
         this._upgradeReq = null;
         this._upgradeCallback = noop;
+        this._upgradeListener = null;
+        this._noDelay = options.noDelay || false;
 
         if (!options.noServer) {
             this.httpServer = options.server ? options.server : http.createServer((request, response) => {
@@ -229,7 +233,7 @@ class Server extends EventEmitter {
                 options.path = '/' + options.path;
             }
 
-            this.httpServer.on('upgrade', (request, socket, head) => {
+            this.httpServer.on('upgrade', this._upgradeListener = ((request, socket, head) => {
                 if (!options.path || options.path == request.url.split('?')[0].split('#')[0]) {
                     if (options.verifyClient) {
                         const info = {
@@ -267,7 +271,7 @@ class Server extends EventEmitter {
                 } else {
                     socket.end();
                 }
-            });
+            }));
         }
 
         this.nativeServer.onDisconnection((nativeSocket, code, message, socket) => {
@@ -310,6 +314,7 @@ class Server extends EventEmitter {
     handleUpgrade(request, socket, upgradeHead, callback) {
         const secKey = request.headers['sec-websocket-key'];
         if (secKey && secKey.length == 24) {
+            socket.setNoDelay(this._noDelay);
             const ticket = this.nativeServer.transfer(socket._handle.fd, socket.ssl ? socket.ssl._external : null);
             socket.on('close', (error) => {
                 this._upgradeReq = request;
@@ -337,6 +342,10 @@ class Server extends EventEmitter {
      * @public
      */
     close() {
+        if (this._upgradeListener && this.httpServer) {
+            this.httpServer.removeListener('upgrade', this._upgradeListener);
+        }
+
         this.nativeServer.close();
     }
 

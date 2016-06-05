@@ -22,7 +22,7 @@ int main()
         });
 
         // our working server, does not listen
-        Server worker(0, false, PERMESSAGE_DEFLATE | SERVER_NO_CONTEXT_TAKEOVER | CLIENT_NO_CONTEXT_TAKEOVER);
+        Server worker(0, false, PERMESSAGE_DEFLATE | SERVER_NO_CONTEXT_TAKEOVER | CLIENT_NO_CONTEXT_TAKEOVER, 1000000);
         ::worker = &worker;
         ::server = &server;
         worker.onConnection([](Socket socket) {
@@ -30,6 +30,11 @@ int main()
 
             //socket.close();
             //socket.close(false, 1011, "abcd", 4);
+
+            Socket::Address a = socket.getAddress();
+            cout << a.address << endl;
+            cout << a.family << endl;
+            cout << a.port << endl;
 
             // test shutting down the server when two clients are connected
             // this should disconnect both clients and exit libuv loop

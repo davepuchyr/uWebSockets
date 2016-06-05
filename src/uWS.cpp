@@ -28,9 +28,13 @@ std::set<void *> validPolls;
 #define SHUT_WR SD_SEND
 #define htobe64(x) htonll(x)
 #define be64toh(x) ntohll(x)
+#define __thread __declspec(thread)
 #pragma comment(lib, "Ws2_32.lib")
 
 inline void close(SOCKET fd) {closesocket(fd);}
+inline const char *inet_ntop(int af, const void *src, char *dst, socklen_t size) {
+    return InetNtop(af, (void *) src, dst, size);
+}
 
 inline SOCKET dup(SOCKET socket) {
     WSAPROTOCOL_INFO pi;
@@ -273,7 +277,7 @@ inline bool rsv2(frameFormat &frame) {return frame & 32;}
 inline bool rsv1(frameFormat &frame) {return frame & 64;}
 inline bool mask(frameFormat &frame) {return frame & 32768;}
 
-Server::Server(int port, bool master, int options, string path) : port(port), master(master), options(options), path(path)
+Server::Server(int port, bool master, int options, int maxPayload, string path) : port(port), master(master), options(options), maxPayload(maxPayload), path(path)
 {
     // lowercase the path
     if (!path.length() || path[0] != '/') {
@@ -437,7 +441,7 @@ void Server::internalFragment(Socket socket, const char *fragment, size_t length
 
             socketData->server->messageCallback(socket, (char *) fragment, length, opCode);
         } else {
-            socketData->buffer.append(fragment, length);
+            socketData->buffer.append(fragment, socketData->server->maxPayload ? min(length, socketData->server->maxPayload - socketData->buffer.length()) : length);
             if (!remainingBytes && fin) {
 
                 // Chapter 6
@@ -1259,12 +1263,8 @@ void Socket::write(char *data, size_t length, bool transferOwnership, void(*call
     }
 }
 
-pair<char *, unsigned int> Socket::getAddress()
+Socket::Address Socket::getAddress()
 {
-#ifdef _WIN32
-    // todo: implement for Windows
-    return {(char *) "", -1};
-#else
     uv_poll_t *p = (uv_poll_t *) socket;
     FD fd;
     uv_fileno((uv_handle_t *) p, (uv_os_fd_t *) &fd);
@@ -1278,13 +1278,12 @@ pair<char *, unsigned int> Socket::getAddress()
     if (addr.ss_family == AF_INET) {
         sockaddr_in *ipv4 = (sockaddr_in *) &addr;
         inet_ntop(AF_INET, &ipv4->sin_addr, buf, sizeof(buf));
-        return {buf, ntohs(ipv4->sin_port)};
+        return {ntohs(ipv4->sin_port), buf, "IPv4"};
     } else {
         sockaddr_in6 *ipv6 = (sockaddr_in6 *) &addr;
         inet_ntop(AF_INET6, &ipv6->sin6_addr, buf, sizeof(buf));
-        return {buf, ntohs(ipv6->sin6_port)};
+        return {ntohs(ipv6->sin6_port), buf, "IPv6"};
     }
-#endif
 }
 
 inline size_t formatMessage(char *dst, char *src, size_t length, OpCode opCode, size_t reportedLength)
